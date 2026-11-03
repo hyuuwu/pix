@@ -1,0 +1,1 @@
+"""Cross-distribution package catalog."""
