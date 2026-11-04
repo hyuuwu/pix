@@ -1,0 +1,92 @@
+# God help me with this app
+
+name: CI
+on:
+  push:
+    branches:
+    - main
+    - develop
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write 
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Install Dependencies
+      run: pip install -r requirements.txt
+      env:
+        PACKAGE_MANAGER: pip
+
+    - name: Install PyInstaller
+      run: |-
+        pip install "pyinstaller>=6.11,<7"
+      env:
+        PACKAGE_MANAGER: pip
+
+    - name: Build Project
+      run: pyinstaller -F main.py
+      env:
+        OUTPUT_DIRECTORY: dist/
+        BUILD_MODE: development
+        OPTIMIZATION: false
+
+
+    - name: Extract Dynamic Version
+      id: get_version
+      run: |
+        if [[ "${{ github.ref_name }}" =~ ^v[0-9] ]]; then
+          VERSION=$(echo "${{ github.ref_name }}" | sed 's/^v//')
+          echo "IS_RELEASE=true" >> $GITHUB_ENV
+        else
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          VERSION="0.0.1-${SHORT_SHA}"
+          echo "IS_RELEASE=false" >> $GITHUB_ENV
+        fi
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+    - name: Install FPM System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ruby ruby-dev rubygems rpm
+        sudo gem install --no-document fpm
+
+    - name: Structure Layout & Build RPM
+      run: |
+        mkdir -p staging/usr/bin/
+        cp dist/main staging/usr/bin/myapp
+        fpm -s dir \
+            -t rpm \
+            -n "pix" \
+            -v "${{ env.VERSION }}" \
+            --iteration "1" \
+            --description "Python app built via PyInstaller" \
+            -C staging/ .
+
+    - name: Upload RPM Artifact (Workflow Storage)
+      uses: actions/upload-artifact@v4
+      with:
+        name: rpm-package-${{ env.VERSION }}
+        path: "*.rpm"
+
+
+    - name: Attach RPM to GitHub Release
+      if: env.IS_RELEASE == 'true'
+      uses: softprops/action-gh-release@v2
+      with:
+        files: "*.rpm"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
